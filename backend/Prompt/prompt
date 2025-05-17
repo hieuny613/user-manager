@@ -1,0 +1,308 @@
+ 12 PROMPT CHI TIẾT PHÁT TRIỂN DỰ ÁN (Chuẩn hóa cho ChatGPT)
+P0 – ARCHITECTURE & SCAFFOLD
+
+
+# PROMPT P0 – ARCHITECTURE & SCAFFOLD
+
+Bạn là kiến trúc sư phần mềm.  
+
+## Yêu cầu:
+1. Vẽ sơ đồ kiến trúc high-level hệ thống User Management & RBAC (mô tả text, kèm link PlantUML/Mermaid nếu có).
+2. Sinh cây thư mục chuẩn, ghi rõ từng folder/file chính cho backend, frontend, docker, docs,...
+3. Sinh file .env.example cho backend (liệt kê đầy đủ biến DB, JWT, cấu hình chính, điền giá trị giả). Nếu frontend có biến môi trường, sinh riêng .env.example cho frontend.
+4. Mô tả ngắn flow xác thực: login, refresh token, logout, quên mật khẩu, đổi mật khẩu.
+5. Danh sách dependency chính (Go modules, npm packages).
+6. Mô tả mối quan hệ các thành phần chính (backend, frontend, DB, cache, storage…).
+
+## Checklist output:
+- Sơ đồ kiến trúc (text + link sơ đồ nếu có)
+- Cây thư mục đầy đủ
+- File .env sample (backend, frontend nếu có)
+- Mô tả flow xác thực
+- Danh sách dependency
+- Mô tả quan hệ thành phần
+
+## Format output:
+- Markdown, chia nhỏ từng phần
+- KHÔNG sinh code chi tiết, chỉ mô tả/cấu trúc
+P1 – MIGRATIONS SQL
+
+
+# PROMPT P1 – MIGRATIONS SQL
+
+## CONTEXT:
+Tham khảo kiến trúc, cây thư mục ở P0.
+
+## Yêu cầu:
+1. Tạo migration SQL (up & down) cho toàn bộ các bảng
+2. Chia migration thành các file:
+   - 01_create_core.up.sql
+   - 01_create_core.down.sql
+   - 02_create_mapping.up.sql
+   - 02_create_mapping.down.sql
+   - 03_create_security.up.sql
+   - 03_create_security.down.sql
+   - Mỗi file có bản up và down (ghi rõ tên file ở đầu block code)
+3. PK là UUID, default uuid_generate_v4()
+4. Trường timestamp: created_at, updated_at, deleted_at (soft delete)
+5. Đầy đủ index, UNIQUE, CHECK, FK constraint
+6. Tạo extension uuid-ossp nếu chưa có (ghi chú)
+7. Trường password_hash có comment "dùng Argon2id"
+8. Nếu có custom index, ghi chú rõ
+
+## Checklist output:
+- Đủ file migration (up & down)
+- Đầy đủ constraint, index
+- Comment rõ trường đặc biệt
+- Tên file đúng chuẩn cây thư mục ở P0
+
+## Format:
+- Mỗi file là 1 block code sql, ghi rõ tên file đầu block
+
+
+P2 – GO MODELS & DB INIT
+
+
+# PROMPT P2 – GO MODELS & DB INIT
+Bạn là một developer go chuyên nghiệp có nhiều năm kinh nghiệm
+
+## CONTEXT:
+Tham khảo output P0, P1
+
+## Yêu cầu:
+1. Viết file đọc các biến môi trường từ file .env 
+2. Viết file Go khởi tạo DB (pkg/database/postgres.go): dùng Gorm, auto enable uuid-ossp, kết nối PostgreSQL.
+3. Struct model cho tất cả bảng (mỗi bảng 1 file: internal/model/{table}.go), có tag Gorm, validate tag chi tiết và đầy đủ.
+4. Makefile target migrate (Makefile), dùng goose hoặc migrate tool, chạy các migration SQL ở bước P1.
+5. Unit test mẫu kiểm tra migrate (internal/test/migration_test.go) dùng testcontainers hoặc dockertest( Viết chi tiết và đầy đủ các test case)
+6. Mỗi file code là 1 block, ghi rõ tên file đầu block.
+
+##Mục tiêu:
+Không chỉ check được DB mà còn phát hiện sớm các lỗi thực tế có thể xảy ra, fail fast, log warning/error rõ ràng, pool connection hợp lý.
+
+## Checklist output:
+- File pkg/database/postgres.go
+- File Makefile (target migrate)
+- File internal/model/*.go (1 file mỗi bảng)
+- File test migrate
+- Đường dẫn, tên file chuẩn như cây thư mục
+
+
+P3 – UTILITIES
+
+
+# PROMPT P3 – UTILITIES
+
+## CONTEXT:
+Reference các model ở P2
+
+## Yêu cầu:
+- Tạo các file:
+  - utils/password.go (Argon2id hash, verify, check policy, check history; config policy bằng env; có test stub utils/password_test.go)
+  - utils/jwt.go (generate, verify, blacklist, rotate key bằng env; có test stub utils/jwt_test.go)
+  - utils/logger.go (logrus JSON, log file+console, gắn request_id)
+  - utils/validator.go (wrapper cho validator, sanitize input)
+- Mỗi file code là 1 block, tên file rõ ràng.
+- Mỗi utils có test stub (nếu liên quan).
+
+## Checklist output:
+- Đủ các file utils
+- Đủ test stub cho password, jwt
+- Đúng đường dẫn, tên file
+P4 – MIDDLEWARE
+
+
+# PROMPT P4 – MIDDLEWARE
+
+## CONTEXT:
+Reference các file util & model trước đó
+
+## Yêu cầu:
+- LoggerMW (middleware/logger.go): log request, attach request_id, log đầy đủ trường bắt buộc.
+- AuthMW (middleware/auth.go): validate JWT, check blacklist, inject userID vào ctx.
+- RateLimitMW (middleware/ratelimit.go): IP + user, dùng golang.org/x/time/rate hoặc tollbooth.
+- SecurityHeadersMW (middleware/security.go): thêm CSP, HSTS, XSS protection v.v.
+- CORS, CSRF MW (middleware/cors.go, middleware/csrf.go): CORS theo whitelist env, CSRF theo double-submit cookie.
+- Test stub cho từng middleware (middleware/*_test.go)
+- Đầu block code ghi rõ tên file.
+
+## Checklist output:
+- Đủ middleware, từng file, từng loại
+- Test stub từng middleware
+- Đúng đường dẫn
+
+
+P5 – REPOSITORY LAYER (INTERFACE + IMPL + TEST)
+
+
+# PROMPT P5 – REPOSITORY LAYER (INTERFACE + IMPL + TEST)
+
+## CONTEXT:
+Reference các model ở P2
+
+## Yêu cầu:
+Với từng thực thể (user, group, role, permission, session, password_history, password_reset_tokens, failed_login_attempts, audit_logs, security_events):
+1. Tạo repository interface cho mỗi entity (internal/repository/{entity}_repository.go)
+2. Tạo Gorm implementation (internal/repository/impl/{entity}_repository_impl.go)
+3. Viết unit-test stub cho mỗi repository (internal/repository/test/{entity}_repository_test.go)
+4. Mỗi interface gồm: CRUD, tìm kiếm theo field chính, pagination, search (nếu hợp lý), method aggregate (với permission/role/user...)
+5. Chia code từng file, đầu mỗi block code ghi rõ tên file.
+6. Nếu có dependency injection (wire), ghi chú thêm.
+
+## Checklist output:
+- Đủ interface, implementation, test cho từng entity (1 file 1 block)
+- Đủ CRUD, search, pagination, aggregate nếu cần
+- Đúng đường dẫn, tên file theo spec P0
+
+
+
+P6 – SERVICE LAYER
+
+
+# PROMPT P6 – SERVICE LAYER
+
+## CONTEXT:
+Reference repository layer ở P5
+
+## Yêu cầu:
+- Tạo service cho:
+  - AuthService (internal/service/auth_service.go): login, logout, refresh, password reset/change, lockout, policy, audit log
+  - UserService (internal/service/user_service.go): CRUD, attach/detach role, aggregate permission, account lockout
+  - GroupService (internal/service/group_service.go): CRUD, attach/detach role, aggregate permission
+  - RoleService (internal/service/role_service.go): CRUD, attach permission
+  - PermissionService (internal/service/permission_service.go): CRUD
+- Mỗi service có interface riêng nếu cần
+- Test stub cho service chính
+- Đầu block code ghi rõ tên file
+
+## Checklist output:
+- Đủ service code, interface, test stub
+- Đúng đường dẫn, tên file
+
+
+P7 – HANDLERS & SWAGGER
+
+
+# PROMPT P7 – HANDLERS & SWAGGER
+
+## CONTEXT:
+Reference service layer ở P6
+
+## Yêu cầu:
+- Handler cho mỗi endpoint chính: /api/v1/auth, /api/v1/users, /api/v1/groups, /api/v1/roles, /api/v1/permissions...
+- Router tổng (internal/handler/router.go): group version, middleware chain
+- Swagger annotation (swaggo/swag): security scheme bearerAuth, tags, mô tả response 401/403
+- Wrapper lỗi Problem+JSON, ví dụ response
+- Đầu mỗi block code ghi rõ tên file
+
+## Checklist output:
+- Đủ handler, router, swagger annotation
+- Wrapper lỗi chuẩn, có ví dụ
+- Đúng đường dẫn, tên file
+
+
+P8 – FRONTEND SCAFFOLD
+
+
+# PROMPT P8 – FRONTEND SCAFFOLD
+
+## CONTEXT:
+Tham khảo kiến trúc P0
+
+## Yêu cầu:
+- Tạo từng file cấu hình scaffold Vue 3 + TS + Vite, Element Plus
+- Ghi rõ tên file đầu mỗi block (vite.config.ts, tsconfig.json, src/main.ts, App.vue, ...)
+- Sinh cây thư mục src: api, components, composables, router, store, utils, views
+- File README stub ở từng module nếu có
+
+## Checklist output:
+- Đủ file config, src chính, README stub
+- Cây thư mục chuẩn
+P9 – AXIOS LAYER & RBAC
+
+
+# PROMPT P9 – AXIOS LAYER & RBAC
+
+## CONTEXT:
+Reference scaffold frontend đã có
+
+## Yêu cầu:
+- src/utils/axios.ts (interceptor attach token, auto refresh, bắt lỗi, tự redirect login)
+- src/composables/useAuth.ts (login, logout, refresh, state pinia)
+- src/composables/useRBAC.ts (check permission, route guard, demo routes mẫu)
+- Service files: api/auth.ts, users.ts, groups.ts, roles.ts, permissions.ts (axios)
+- Logger util (console-json + gửi /api/v1/logs)
+- Đầu block code ghi rõ tên file
+
+## Checklist output:
+- Đủ các file trên
+- Interceptor đúng
+- Demo RBAC guard
+- Đường dẫn đúng
+P10 – UI COMPONENTS & PAGES
+
+
+# PROMPT P10 – UI COMPONENTS & PAGES
+
+## CONTEXT:
+Reference scaffold, composables trước
+
+## Yêu cầu:
+- Tạo các file component/page chính (Element Plus):
+  - LoginForm.vue, PasswordReset.vue
+  - UserList.vue, UserForm.vue, RoleAssignmentDialog.vue
+  - GroupList.vue, GroupForm.vue
+  - RoleList.vue, RoleForm.vue, PermissionAssignmentDialog.vue
+  - PermissionList.vue, PermissionForm.vue
+- Thêm directive v-permission & router guards.
+- Các form có validate.
+- Comment hướng dẫn test thủ công.
+- Đầu block code ghi rõ tên file.
+
+## Checklist output:
+- Đủ file component/page
+- Có directive v-permission
+- Validate form
+- Hướng dẫn test thủ công (comment trong code)
+P11 – DOCKER & COMPOSE
+
+
+# PROMPT P11 – DOCKER & COMPOSE
+
+## CONTEXT:
+Reference cây thư mục, backend, frontend
+
+## Yêu cầu:
+- Dockerfile backend (multi-stage CGO=0)
+- Dockerfile frontend (vite build)
+- docker-compose.yml đủ service: api, web, postgres, migrate, swagger-ui
+- Script entrypoint migrate & start, kiểm tra DB ready
+- Sample .env.*
+- docker-compose phải chạy được toàn bộ stack, test DB healthcheck
+- Đầu block code ghi rõ tên file
+
+## Checklist output:
+- Đủ các file Dockerfile, compose
+- Entrypoint đúng, kiểm tra DB ready
+- DB healthcheck
+- Đường dẫn đúng
+P12 – README & TEST
+
+
+# PROMPT P12 – README & TEST
+
+## CONTEXT:
+Reference tất cả file đã sinh
+
+## Yêu cầu:
+- README.md: hướng dẫn local-dev, docker-up, migrate, swagger, test
+- Sơ đồ quick-start, chú thích flow CI/CD nếu có
+- Mô tả security hardening, OWASP checklist đã áp dụng (mapping với OWASP ASVS)
+- Liệt kê lệnh CI (go test ./..., npm run test)
+- Ví dụ test e2e đơn giản (backend + frontend)
+- Nếu code bị cắt, tiếp tục sinh phần còn lại ở block mới
+
+## Checklist output:
+- Đủ các mục trên
+- README markdown chuẩn
+- Có sơ đồ/flow, security checklist

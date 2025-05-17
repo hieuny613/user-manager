@@ -1,0 +1,469 @@
+
+
+
+
+# 1. Thông tin yêu cầu dự án User Management & RBAC
+
+## 1.1. Yêu cầu tổng quan
+
+* **Backend:** Golang 1.22+, Gin Framework, ORM Gorm, chuẩn DevSecOps, JWT/Session, logging, audit, middleware chuẩn bảo mật, RESTful API, migration riêng, test tự động, logrus (json), audit log mọi thao tác.
+* **Frontend:** Vue 3 + Typescript + Element Plus + Vite, bảo mật input, validate, route guard, ràng buộc role/permission, bảo vệ CSRF, log lỗi gửi về backend.
+* **Database:** PostgreSQL, UUID PK, chuẩn hóa bảng users/groups/roles/permissions và các bảng liên kết, chuẩn security (password policy, tracking history, lockout, audit, session), migration up/down rõ ràng.
+* **Triển khai:** Docker, docker-compose, file .env, logging, tài liệu swagger/openapi, hướng dẫn devops.
+* **Tuân thủ:** OWASP Top 10, DevSecOps best-practices.
+
+---
+
+## 1.2. Yêu cầu chi tiết và nghiệp vụ quan trọng
+
+* **Quản lý người dùng (users):**
+
+  * Đăng ký, đăng nhập, đổi/quên mật khẩu, khoá/mở khoá, tracking failed login, quản lý session.
+  * Lưu lịch sử mật khẩu, enforce policy không trùng 5 mật khẩu gần nhất.
+* **RBAC:**
+
+  * User <-> Group <-> Role <-> Permission.
+  * Gán/thu hồi quyền động, truy vấn tổng hợp quyền cho user/group.
+* **API:**
+
+  * /api/v1/auth/\*, /users, /groups, /roles, /permissions, gán/xóa role/permission, phân trang, tìm kiếm, chuẩn RFC 7807 khi lỗi.
+* **Security:**
+
+  * JWT RS256, access+refresh, revoke/blacklist, log chi tiết, session/fingerprint/timeout, CSRF, brute-force lockout, CORS whitelist, security headers, audit log mọi thay đổi.
+* **DevOps:**
+
+  * Docker build multi-stage, compose, .env, README hướng dẫn run/test/migrate/swagger.
+* **Bảo mật đầu cuối:**
+
+  * Không tiết lộ thông tin user khi quên mật khẩu, reset password dùng token 1 lần, revoke session khi đổi/reset pass.
+
+---
+
+# 2. Kiến trúc tổng thể hệ thống
+
+## 2.1. Sơ đồ high-level (mermaid)
+
+```mermaid
+flowchart LR
+    subgraph Internet
+        Client[Frontend<br/>Vue3 + TS + Element Plus]
+    end
+    subgraph DMZ
+        Nginx[Nginx Proxy<br/>(Optional, SSL, Security)]
+    end
+    subgraph Backend["Backend API"]
+        API[Golang Gin API<br/>/api/v1/*]
+        Swagger[Swagger UI]
+    end
+    subgraph DB["PostgreSQL DB"]
+        Postgres[(PostgreSQL<br/>UUID PK)]
+    end
+    subgraph DevOps["DevOps & Logging"]
+        LogFile[Log File<br/>logrus JSON]
+        AuditLog[Audit/Security Logs]
+        Migration[Migration Service]
+    end
+    Client-->|HTTPS, REST|Nginx
+    Nginx-->|Reverse Proxy|API
+    Client-->|Swagger Docs|Swagger
+    API-->|DB Conn|Postgres
+    API-->|Audit, Log|LogFile
+    API-->|Audit, Log|AuditLog
+    API-->|Migration|Migration
+    API-->|Serve Swagger|Swagger
+    LogFile-->|Centralize/SIEM|DevOps
+    AuditLog-->|Centralize/SIEM|DevOps
+```
+
+## 2.2. Cây thư mục hệ thống
+
+### Backend (Golang Gin)
+
+```
+backend/
+├── cmd/
+│   └── api/                 # Main API entry (main.go)
+├── config/
+│   └── config.go            # Load env, app config
+├── internal/
+│   ├── model/               # Gorm models
+│   ├── repository/          # Repository interfaces + Gorm impl
+│   ├── service/             # Business logic/services
+│   ├── handler/             # Gin handlers (API endpoint logic)
+│   ├── middleware/          # Auth, RateLimit, Logger, Security, CSRF
+│   ├── utils/               # Helper (JWT, Argon2id, validator, ...)
+│   ├── tests/               # Unit + integration tests
+│   ├── migration/           # Migration runner
+│   └── rbac/                # RBAC helpers
+├── pkg/
+│   └── database/            # DB connect/init
+├── docs/
+│   └── swagger/             # Swagger/OpenAPI spec
+├── logs/                    # Log files
+├── .env
+├── Dockerfile
+├── Makefile
+└── go.mod
+```
+
+### Frontend (Vue3 + TS + Element Plus + Vite)
+
+```
+frontend/
+├── public/
+│   └── index.html
+├── src/
+│   ├── api/
+│   ├── assets/
+│   ├── components/
+│   ├── composables/
+│   ├── directives/
+│   ├── router/
+│   ├── store/
+│   ├── utils/
+│   ├── views/
+│   ├── App.vue
+│   └── main.ts
+├── tests/
+├── Dockerfile
+├── vite.config.ts
+├── .env
+└── package.json
+```
+
+### Docker & DevOps
+
+```
+deploy/
+├── docker-compose.yml
+├── Dockerfile.backend
+├── Dockerfile.frontend
+├── .env.example
+└── README.md
+```
+
+## 2.3. Database (Chuẩn hóa, PK/FK, bảo mật)
+
+### Bảng chính & liên kết
+
+| Bảng                    | Mục đích                                     |
+| ----------------------- | -------------------------------------------- |
+| users                   | Người dùng                                   |
+| groups                  | Nhóm người dùng                              |
+| roles                   | Vai trò                                      |
+| permissions             | Quyền                                        |
+| user\_groups            | Liên kết N-N user – group                    |
+| user\_roles             | Liên kết N-N user – role                     |
+| group\_roles            | Liên kết N-N group – role                    |
+| role\_permissions       | Liên kết N-N role – permission               |
+| sessions                | Quản lý phiên đăng nhập                      |
+| password\_history       | Lịch sử mật khẩu                             |
+| password\_reset\_tokens | Token reset mật khẩu, hỗ trợ forgot password |
+| audit\_logs             | Log thao tác CRUD & security event           |
+| security\_events        | Sự kiện bảo mật quan trọng                   |
+
+---
+
+### Chi tiết bảng users (chuẩn cuối)
+
+| Trường                | Kiểu                | Ghi chú       |
+| --------------------- | ------------------- | ------------- |
+| id                    | UUID (PK)           |               |
+| username              | VARCHAR(100) UNIQUE |               |
+| email                 | VARCHAR(255) UNIQUE |               |
+| first\_name           | VARCHAR(100)        |               |
+| last\_name            | VARCHAR(100)        |               |
+| password\_hash        | VARCHAR(255)        | Argon2id hash |
+| is\_active            | BOOLEAN             |               |
+| is\_locked            | BOOLEAN             |               |
+| last\_login           | TIMESTAMP           |               |
+| last\_login\_ip       | VARCHAR(45)         |               |
+| password\_changed\_at | TIMESTAMP           |               |
+| failed\_count         | INT                 |               |
+| locked\_until         | TIMESTAMP           |               |
+| created\_at           | TIMESTAMP           |               |
+| updated\_at           | TIMESTAMP           |               |
+| deleted\_at           | TIMESTAMP NULL      |               |
+
+---
+
+### password\_reset\_tokens (forgot password)
+
+| Trường      | Kiểu         | Ghi chú                |
+| ----------- | ------------ | ---------------------- |
+| id          | UUID (PK)    |                        |
+| user\_id    | UUID FK      | FK users(id)           |
+| token       | VARCHAR(128) | UNIQUE, random, expire |
+| expire\_at  | TIMESTAMP    |                        |
+| used\_at    | TIMESTAMP    |                        |
+| created\_at | TIMESTAMP    |                        |
+
+---
+
+### ERD tổng quan (Mermaid)
+
+```mermaid
+erDiagram
+    USERS {
+      UUID id PK
+      VARCHAR username UNIQUE
+      VARCHAR email UNIQUE
+      VARCHAR password_hash
+      VARCHAR first_name
+      VARCHAR last_name
+      BOOL is_active
+      BOOL is_locked
+      INT failed_count
+      TIMESTAMP locked_until
+      TIMESTAMP last_login
+      VARCHAR last_login_ip
+      TIMESTAMP password_changed_at
+      TIMESTAMP created_at
+      TIMESTAMP updated_at
+      TIMESTAMP deleted_at
+    }
+    GROUPS {
+      UUID id PK
+      VARCHAR name UNIQUE
+      TEXT description
+      TIMESTAMP created_at
+      TIMESTAMP updated_at
+      TIMESTAMP deleted_at
+    }
+    ROLES {
+      UUID id PK
+      VARCHAR name UNIQUE
+      TEXT description
+      TIMESTAMP created_at
+      TIMESTAMP updated_at
+      TIMESTAMP deleted_at
+    }
+    PERMISSIONS {
+      UUID id PK
+      VARCHAR name UNIQUE
+      TEXT description
+      TIMESTAMP created_at
+      TIMESTAMP updated_at
+      TIMESTAMP deleted_at
+    }
+    USER_GROUPS {
+      UUID id PK
+      UUID user_id FK
+      UUID group_id FK
+      TIMESTAMP created_at
+    }
+    USER_ROLES {
+      UUID id PK
+      UUID user_id FK
+      UUID role_id FK
+      TIMESTAMP created_at
+    }
+    GROUP_ROLES {
+      UUID id PK
+      UUID group_id FK
+      UUID role_id FK
+      TIMESTAMP created_at
+    }
+    ROLE_PERMISSIONS {
+      UUID id PK
+      UUID role_id FK
+      UUID permission_id FK
+      TIMESTAMP created_at
+    }
+    SESSIONS {
+      UUID id PK
+      UUID user_id FK
+      VARCHAR device
+      VARCHAR ip
+      VARCHAR fingerprint
+      BOOL is_active
+      TIMESTAMP created_at
+      TIMESTAMP expired_at
+      TIMESTAMP revoked_at
+    }
+    PASSWORD_HISTORY {
+      UUID id PK
+      UUID user_id FK
+      VARCHAR password_hash
+      TIMESTAMP created_at
+      BOOL is_expired
+    }
+    PASSWORD_RESET_TOKENS {
+      UUID id PK
+      UUID user_id FK
+      VARCHAR token UNIQUE
+      TIMESTAMP expire_at
+      TIMESTAMP used_at
+      TIMESTAMP created_at
+    }
+    AUDIT_LOGS {
+      UUID id PK
+      UUID actor_id FK
+      VARCHAR entity
+      UUID entity_id
+      VARCHAR action
+      TEXT old_value
+      TEXT new_value
+      VARCHAR ip
+      VARCHAR user_agent
+      VARCHAR status
+      TIMESTAMP created_at
+    }
+    SECURITY_EVENTS {
+      UUID id PK
+      UUID user_id FK
+      VARCHAR type
+      TEXT description
+      VARCHAR ip
+      TIMESTAMP created_at
+    }
+    USERS ||--o{ USER_GROUPS : "1-n"
+    GROUPS ||--o{ USER_GROUPS : "1-n"
+    USERS ||--o{ USER_ROLES : "1-n"
+    ROLES ||--o{ USER_ROLES : "1-n"
+    GROUPS ||--o{ GROUP_ROLES : "1-n"
+    ROLES ||--o{ GROUP_ROLES : "1-n"
+    ROLES ||--o{ ROLE_PERMISSIONS : "1-n"
+    PERMISSIONS ||--o{ ROLE_PERMISSIONS : "1-n"
+    USERS ||--o{ SESSIONS : "1-n"
+    USERS ||--o{ PASSWORD_HISTORY : "1-n"
+    USERS ||--o{ PASSWORD_RESET_TOKENS : "1-n"
+    USERS ||--o{ AUDIT_LOGS : "1-n"
+    USERS ||--o{ SECURITY_EVENTS : "1-n"
+```
+
+---
+
+# 3. Flow xác thực và quản lý mật khẩu
+
+## 3.1. Đăng nhập, đổi mật khẩu
+
+* Xác thực JWT, kiểm tra trạng thái user (locked, active).
+* Đổi mật khẩu: kiểm tra mật khẩu cũ, policy mới, update hash, ghi lịch sử, revoke session, log audit.
+
+## 3.2. Quên mật khẩu (forgot password)
+
+1. User nhập email → `/api/v1/password/forgot`
+2. Backend tạo token, gửi mail reset (hạn 10-15 phút), lưu vào `password_reset_tokens`.
+3. User nhập mật khẩu mới qua link (token), backend kiểm tra token, đổi password, revoke session, đánh dấu token đã dùng, ghi log.
+
+---
+
+# 4. File .env mẫu (backend)
+
+```env
+# .env.example
+# ==================== Server Configuration ====================
+SERVER_PORT=8080
+SERVER_HOST=0.0.0.0
+ENV=development
+
+# ==================== Database Configuration ====================
+DB_HOST=postgres
+DB_PORT=5432
+DB_USER=dbuser
+DB_PASSWORD=dbpassword
+DB_NAME=user_management
+DB_SSL_MODE=disable
+DB_MAX_CONNECTIONS=100
+DB_MAX_IDLE_CONNECTIONS=10
+DB_MAX_LIFETIME=1h
+
+# ==================== JWT & Session Configuration ====================
+JWT_SECRET=your-super-secret-string
+JWT_PUBLIC_KEY=./keys/public.pem
+JWT_PRIVATE_KEY=./keys/private.pem
+JWT_ALGO=RS256
+TOKEN_EXPIRE_MIN=15
+REFRESH_TOKEN_EXPIRE_H=72
+SESSION_TIMEOUT=30m
+MAX_CONCURRENT_SESSIONS=3
+
+# ==================== Security & Account Policy ====================
+PASSWORD_MIN_LENGTH=8
+PASSWORD_HISTORY_SIZE=5
+PASSWORD_EXPIRY_DAYS=90
+ACCOUNT_LOCKOUT_THRESHOLD=5
+ACCOUNT_LOCKOUT_DURATION=30m
+RESET_PASSWORD_TOKEN_EXPIRE_MIN=15
+
+# ==================== Rate Limiting ====================
+RATE_LIMIT_REQUESTS=100
+RATE_LIMIT_DURATION=1m
+
+# ==================== CORS Configuration ====================
+CORS_ALLOWED_ORIGINS=https://your-frontend.com
+CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS
+CORS_ALLOWED_HEADERS=Content-Type,Authorization,X-CSRF-Token
+CORS_EXPOSE_HEADERS=Content-Length,Content-Type
+CORS_ALLOW_CREDENTIALS=true
+
+# ==================== Logging & Audit ====================
+LOG_LEVEL=info
+LOG_FORMAT=json
+LOG_FILE_PATH=/var/log/app/app.log
+LOG_MAX_SIZE=100
+LOG_MAX_BACKUPS=3
+LOG_MAX_AGE=28
+LOG_COMPRESS=true
+AUDIT_LOG_PATH=./logs/audit.log
+
+# ==================== Swagger & Security Headers ====================
+SWAGGER_ENABLE=true
+SECURITY_HEADERS=true
+
+# ==================== Mailer ====================
+MAILER_HOST=smtp.example.com
+MAILER_PORT=587
+MAILER_USER=noreply@example.com
+MAILER_PASS=xxxxxx
+
+
+```
+
+---
+
+# 5. Dependency chính
+
+## Backend (Go)
+
+* github.com/gin-gonic/gin
+* gorm.io/gorm, gorm.io/driver/postgres
+* github.com/sirupsen/logrus
+* github.com/golang-jwt/jwt/v5
+* golang.org/x/crypto/argon2
+* github.com/go-playground/validator/v10
+* github.com/gin-contrib/cors, sessions, secure
+* github.com/stretchr/testify
+* github.com/testcontainers/testcontainers-go
+* github.com/swaggo/gin-swagger
+
+## Frontend (Vue3 + TS)
+
+* vue\@3, vue-router, pinia
+* element-plus
+* axios
+* yup hoặc vee-validate
+* dompurify
+* vite, typescript, eslint, prettier
+
+## DevOps
+
+* Docker, docker-compose
+* PostgreSQL
+* Swaggo/swagger-ui (Docker)
+* Goose hoặc Flyway migration
+
+---
+
+# 6. Ghi chú bảo mật & best practice
+
+* Mọi PK là UUID v4, unique, index đầy đủ.
+* Soft delete với trường deleted\_at.
+* Audit log mọi thay đổi dữ liệu & event bảo mật.
+* Argon2id cho hash mật khẩu, không lưu salt riêng.
+* Quên mật khẩu: dùng token 1 lần, expire, không tiết lộ thông tin tồn tại user.
+* Tối ưu index cho các bảng liên kết, query hiệu quả.
+
+
+
